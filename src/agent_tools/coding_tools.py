@@ -14,6 +14,18 @@ def _safe_session_id(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)[:120] or "current"
 
 
+def _task_path(task_id: str) -> str:
+    return os.path.join(_CODING_TASK_DIR, f"{_safe_session_id(task_id)}.json")
+
+
+def _save_state(path: str, state: dict) -> None:
+    os.makedirs(_CODING_TASK_DIR, exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
 class TodoWriteTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         try:
@@ -36,8 +48,7 @@ class TodoWriteTool:
             status = str(item.get("status") or "pending").strip()
             if status not in allowed_statuses:
                 return {"error": f"todowrite: invalid status {status!r}", "exit_code": 1}
-            if status == "in_progress":
-                active_count += 1
+            active_count += status == "in_progress"
             priority = str(item.get("priority") or "medium").strip()
             if priority not in allowed_priorities:
                 priority = "medium"
@@ -67,9 +78,11 @@ class CodingTaskTool:
             return {"error": "coding_task: object required", "exit_code": 1}
         session_id = _safe_session_id(str(ctx.get("session_id") or args.get("session_id") or "current"))
         task_id = _safe_session_id(str(args.get("task_id") or session_id))
-        os.makedirs(_CODING_TASK_DIR, exist_ok=True)
-        path = os.path.join(_CODING_TASK_DIR, f"{task_id}.json")
-        if args.get("action") == "load" and os.path.exists(path):
+        path = _task_path(task_id)
+        action_name = str(args.get("action") or "start").lower()
+        if action_name == "load":
+            if not os.path.exists(path):
+                return {"error": f"coding_task: task {task_id!r} does not exist", "exit_code": 1}
             with open(path, "r", encoding="utf-8") as f:
                 state_data = json.load(f)
             return {"output": "Loaded coding task state", "exit_code": 0, "state": state_data}
@@ -84,67 +97,80 @@ class CodingTaskTool:
             autonomy = AutonomyLevel(level)
         except ValueError:
             return {"error": f"coding_task: invalid autonomy level {level!r}", "exit_code": 1}
-        limits = TaskLimits(
-            max_iterations=max(1, min(int(args.get("max_iterations", 20)), 100)),
-            max_tool_calls=max(1, min(int(args.get("max_tool_calls", 100)), 500)),
-            max_shell_commands=max(1, min(int(args.get("max_shell_commands", 40)), 200)),
-            max_execution_seconds=max(30, min(int(args.get("max_execution_seconds", 1800)), 7200)),
-            max_test_retries=max(1, min(int(args.get("max_test_retries", 5)), 20)),
-        )
+        try:
+            limits = TaskLimits(
+                max_iterations=max(1, min(int(args.get("max_iterations", 20)), 100)),
+                max_tool_calls=max(1, min(int(args.get("max_tool_calls", 100)), 500)),
+                max_shell_commands=max(1, min(int(args.get("max_shell_commands", 40)), 200)),
+                max_execution_seconds=max(30, min(int(args.get("max_execution_seconds", 1800)), 7200)),
+                max_test_retries=max(1, min(int(args.get("max_test_retries", 5)), 20)),
+            )
+        except (TypeError, ValueError):
+            return {"error": "coding_task: numeric limits must be valid integers", "exit_code": 1}
         state = CodingTaskState(task_id=task_id, request=request, workspace=workspace, limits=limits)
         orchestrator = CodingAgentOrchestrator(state, CodingPolicy(autonomy))
         action = orchestrator.begin()
         state.status = TaskStatus.PLANNING
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+        _save_state(path, state.to_dict())
         return {"output": f"Coding task initialized: {task_id}. Status: {state.status.value}. Next: inspect the repository and create a plan.", "exit_code": 0, "task_id": task_id, "state": state.to_dict(), "action": {"name": action.name, "status": action.status.value, "description": action.description}}
 
 
 class CodingInspectTool:
     """Return bounded repository metadata without dumping source into context."""
-
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.coding_agent import RepositoryInspector, detect_test_commands, select_initial_context
         try:
             args = json.loads(content or "{}")
         except (json.JSONDecodeError, TypeError):
             return {"error": "coding_inspect: JSON object required", "exit_code": 1}
+        if not isinstance(args, dict):
+            return {"error": "coding_inspect: object required", "exit_code": 1}
         workspace = str(args.get("workspace") or ctx.get("workspace") or "").strip()
         if not workspace:
             return {"error": "coding_inspect: workspace is required", "exit_code": 1}
-        inspector = RepositoryInspector(workspace)
-        summary = inspector.summary()
+        try:
+            inspector = RepositoryInspector(workspace)
+            summary = inspector.summary()
+            limit = max(1, min(int(args.get("limit", 40)), 100))
+            tests = detect_test_commands(workspace)
+            candidates = select_initial_context(workspace, limit=limit)
+        except (OSError, ValueError, TypeError) as exc:
+            return {"error": f"coding_inspect: {exc}", "exit_code": 1}
         return {
             "output": "Repository inspected without loading source contents.",
             "exit_code": 0,
             "summary": {"root": summary.root, "files": summary.files, "directories": summary.directories, "top_level": list(summary.top_level)},
-            "test_commands": [{"command": t.command, "reason": t.reason} for t in detect_test_commands(workspace)],
-            "candidate_files": select_initial_context(workspace, limit=max(1, min(int(args.get("limit", 40)), 100))),
+            "test_commands": [{"command": t.command, "reason": t.reason} for t in tests],
+            "candidate_files": candidates,
         }
 
 
 class CodingGitTool:
     """Read-only Git inspection for coding tasks."""
-
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.coding_agent import GitInspector
         try:
             args = json.loads(content or "{}")
         except (json.JSONDecodeError, TypeError):
             return {"error": "coding_git: JSON object required", "exit_code": 1}
+        if not isinstance(args, dict):
+            return {"error": "coding_git: object required", "exit_code": 1}
         workspace = str(args.get("workspace") or ctx.get("workspace") or "").strip()
         if not workspace:
             return {"error": "coding_git: workspace is required", "exit_code": 1}
         action = str(args.get("action") or "status").lower()
-        git = GitInspector(workspace)
-        if action == "status":
-            result = git.status()
-        elif action == "diff":
-            result = git.diff(bool(args.get("staged")))
-        elif action == "log":
-            result = git.log(int(args.get("limit", 10)))
-        elif action == "branches":
-            result = git.branches()
-        else:
-            return {"error": f"coding_git: unsupported read-only action {action!r}", "exit_code": 1}
+        try:
+            git = GitInspector(workspace)
+            if action == "status":
+                result = git.status()
+            elif action == "diff":
+                result = git.diff(bool(args.get("staged")))
+            elif action == "log":
+                result = git.log(int(args.get("limit", 10)))
+            elif action == "branches":
+                result = git.branches()
+            else:
+                return {"error": f"coding_git: unsupported read-only action {action!r}", "exit_code": 1}
+        except (OSError, ValueError, TypeError) as exc:
+            return {"error": f"coding_git: {exc}", "exit_code": 1}
         return {"output": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "action": action}
