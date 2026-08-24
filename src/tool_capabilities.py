@@ -64,16 +64,20 @@ def _register(names: Iterable[str], *effects: ToolEffect, result_integrity: Resu
 
 _register({"ask_user", "update_plan"}, ToolEffect.USER_INTERACTION)
 _register({"list_cached_models", "list_cookbook_servers", "list_downloads", "list_models", "list_serve_presets", "list_served_models"}, ToolEffect.READ_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
-_register({"search_hf_models", "web_search"}, ToolEffect.BROKERED_NETWORK_READ, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
-_register({"web_fetch"}, ToolEffect.BROKERED_NETWORK_READ, ToolEffect.NETWORK_EGRESS, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+_register({"search_hf_models"}, ToolEffect.BROKERED_NETWORK_READ, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
 _register({"get_workspace", "glob", "grep", "ls", "read_file", "coding_inspect", "coding_git"}, ToolEffect.READ_WORKSPACE, result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED)
+_register({"web_search"}, ToolEffect.BROKERED_NETWORK_READ, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+_register({"web_fetch"}, ToolEffect.BROKERED_NETWORK_READ, ToolEffect.NETWORK_EGRESS, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+_register({"list_email_accounts", "list_emails", "read_email", "resolve_contact", "scan_email_unsubscribes", "search_chats", "search_emails", "list_sessions", "tail_serve_output", "vault_get", "vault_search"}, ToolEffect.READ_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
 _register({"bash", "manage_bg_jobs", "python"}, ToolEffect.EXECUTE_CODE, result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED)
 _register({"apply_patch", "edit_file", "write_file"}, ToolEffect.WRITE_WORKSPACE, result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED)
-_register({"coding_task"}, ToolEffect.WRITE_PRIVATE, result_integrity=ResultIntegrity.SYSTEM)
+_register({"coding_task"}, ToolEffect.WRITE_PRIVATE)
 _register({"create_document", "manage_calendar", "manage_contact", "manage_documents", "manage_memory", "manage_notes", "manage_research", "manage_session", "manage_skills", "manage_tasks", "suggest_document", "todowrite"}, ToolEffect.WRITE_PRIVATE)
 _register({"ai_draft_email_reply", "create_session", "draft_email", "draft_email_reply"}, ToolEffect.WRITE_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
 _register({"edit_document", "update_document"}, ToolEffect.WRITE_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
-_register({"pipeline", "send_to_session", "chat_with_model", "ask_teacher"}, ToolEffect.NETWORK_EGRESS, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+_register({"pipeline"}, ToolEffect.NETWORK_EGRESS, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+_register({"send_to_session"}, ToolEffect.NETWORK_EGRESS, ToolEffect.WRITE_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+_register({"chat_with_model", "ask_teacher"}, ToolEffect.NETWORK_EGRESS, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
 _register({"download_attachment"}, ToolEffect.READ_PRIVATE, ToolEffect.WRITE_WORKSPACE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
 _register({"edit_image", "generate_image", "trigger_research"}, ToolEffect.NETWORK_EGRESS, ToolEffect.WRITE_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
 _register({"archive_email", "bulk_email", "mark_email_read", "reply_to_email", "send_email", "unsubscribe_email"}, ToolEffect.EXTERNAL_SIDE_EFFECT, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
@@ -138,87 +142,163 @@ _ACTION_DESTRUCTIVE: Mapping[str, frozenset[str]] = MappingProxyType({
     "manage_calendar": frozenset({"delete_event"}),
     "manage_contact": frozenset({"delete"}),
     "manage_documents": frozenset({"delete", "tidy"}),
+    "manage_endpoints": frozenset({"delete"}),
+    "manage_bg_jobs": frozenset({"kill", "stop", "cancel", "terminate"}),
     "manage_memory": frozenset({"delete"}),
+    "manage_mcp": frozenset({"delete"}),
     "manage_notes": frozenset({"delete"}),
     "manage_research": frozenset({"delete"}),
     "manage_session": frozenset({"delete", "truncate"}),
+    "manage_settings": frozenset({"delete", "reset"}),
     "manage_skills": frozenset({"delete"}),
     "manage_tasks": frozenset({"delete"}),
+    "manage_tokens": frozenset({"delete"}),
+    "manage_webhooks": frozenset({"delete"}),
 })
+
+_ACTION_DEFAULTS: Mapping[str, str] = MappingProxyType({"manage_calendar": "list_events", "manage_documents": "list", "manage_research": "list", "manage_tasks": "list"})
+_ACTION_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType({
+    "manage_calendar": MappingProxyType({"create": "create_event", "update": "update_event", "delete": "delete_event", "list": "list_events"}),
+    "manage_notes": MappingProxyType({"create": "add", "new": "add", "save": "add", "remind": "add", "reminder": "add", "remove": "delete", "remove_item": "toggle_item"}),
+})
+_LINE_ACTION_TOOLS = frozenset({"manage_memory", "manage_session"})
+
+
+def _action_from_content(tool_name: str, content: Any) -> str | None:
+    if isinstance(content, Mapping):
+        payload: Any = dict(content)
+    elif isinstance(content, str):
+        raw = content.strip()
+        if tool_name in _LINE_ACTION_TOOLS and raw and not raw.startswith("{"):
+            return raw.splitlines()[0].strip().replace("-", "_").casefold() or None
+        try:
+            payload = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            return None
+    else:
+        payload = {}
+    if not isinstance(payload, dict):
+        return None
+    if len(payload) == 1 and isinstance(payload.get("body"), dict) and "action" in payload["body"]:
+        payload = payload["body"]
+    action = payload.get("action")
+    if not action and tool_name == "manage_calendar" and isinstance(payload.get("events"), list):
+        action = "create_event"
+    if not action and tool_name == "manage_tasks" and any(payload.get(key) is not None for key in ("task", "description", "schedule", "time", "day_of_week")):
+        action = "create"
+    if not isinstance(action, str) or not action.strip():
+        action = _ACTION_DEFAULTS.get(tool_name)
+    if not action:
+        return None
+    normalized = action.strip().replace("-", "_").casefold()
+    return _ACTION_ALIASES.get(tool_name, {}).get(normalized, normalized)
 
 
 def capabilities_for_action(tool_name: Any, content: Any) -> ToolCapabilities:
     base = capabilities_for_tool(tool_name)
-    if not isinstance(tool_name, str) or not isinstance(content, str):
+    if not isinstance(tool_name, str):
         return base
-    try:
-        args = json.loads(content) if content.strip().startswith("{") else {}
-    except (json.JSONDecodeError, TypeError):
-        return base
-    if not isinstance(args, dict):
-        return base
-    action = str(args.get("action") or "").lower()
-    reads = _PRIVATE_ACTION_READS.get(tool_name, frozenset())
-    writes = _PRIVATE_ACTION_WRITES.get(tool_name, frozenset())
-    destructive = _ACTION_DESTRUCTIVE.get(tool_name, frozenset())
-    if action in reads:
-        return _capabilities(ToolEffect.READ_PRIVATE, result_integrity=base.result_integrity)
-    if action in writes:
-        effects = {ToolEffect.WRITE_PRIVATE}
-        if action in destructive:
+    action = _action_from_content(tool_name, content)
+    destructive = action in _ACTION_DESTRUCTIVE.get(tool_name, ())
+    if tool_name not in _PRIVATE_ACTION_READS:
+        if not destructive:
+            return base
+        return ToolCapabilities(frozenset(set(base.effects) | {ToolEffect.DESTRUCTIVE}), base.result_integrity, known=base.known)
+    if action in _PRIVATE_ACTION_READS[tool_name]:
+        return _capabilities(ToolEffect.READ_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+    if action in _PRIVATE_ACTION_WRITES[tool_name]:
+        effects = set(base.effects)
+        if destructive:
             effects.add(ToolEffect.DESTRUCTIVE)
-        return _capabilities(*effects, result_integrity=base.result_integrity)
-    return base
+        return ToolCapabilities(frozenset(effects), ResultIntegrity.EXTERNAL_UNTRUSTED, known=base.known)
+    return _capabilities(ToolEffect.READ_PRIVATE, ToolEffect.WRITE_PRIVATE, result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+
+
+def tool_result_is_successful(result: Any) -> bool:
+    return bool(isinstance(result, dict) and not result.get("blocked") and not result.get("approval_required") and not result.get("error") and result.get("exit_code") in (None, 0) and result.get("success") is not False)
+
+
+def tool_result_should_arm_gate(tool_name: Any, result: Any, content: Any = None) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("blocked") or result.get("approval_required"):
+        return False
+    if result.get("untrusted_content") is True:
+        return True
+    capabilities = capabilities_for_action(tool_name, content)
+    if capabilities.result_integrity is ResultIntegrity.SYSTEM:
+        return False
+    if tool_result_is_successful(result):
+        return True
+    non_content_keys = frozenset({"approval_required", "blocked", "exit_code", "policy", "success", "untrusted_content"})
+    return any(key not in non_content_keys and value not in (None, "", [], {}, ()) for key, value in result.items())
+
+
+POST_EXTERNAL_BLOCKED_EFFECTS = frozenset({ToolEffect.READ_PRIVATE, ToolEffect.WRITE_WORKSPACE, ToolEffect.WRITE_PRIVATE, ToolEffect.EXECUTE_CODE, ToolEffect.NETWORK_EGRESS, ToolEffect.EXTERNAL_SIDE_EFFECT, ToolEffect.UI_SIDE_EFFECT, ToolEffect.ADMIN_CHANGE, ToolEffect.DESTRUCTIVE})
+
+@dataclass(frozen=True)
+class ToolGateDecision:
+    allowed: bool
+    reason: str | None = None
+
+_EXTERNAL_MESSAGE_SOURCES = frozenset({"injected research context", "prefetched search context", "research context", "web search results", "youtube transcript"})
+_EXTERNAL_MESSAGE_SOURCE_PREFIXES = ("web page:",)
+
+
+def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> bool:
+    for message in messages or ():
+        if not isinstance(message, dict):
+            continue
+        metadata = message.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("trusted") is not False:
+            continue
+        gate_marker = metadata.get("tool_gate_untrusted")
+        if gate_marker is True:
+            return True
+        if gate_marker is False:
+            continue
+        if metadata.get("provenance_origin") == "external":
+            return True
+        source = metadata.get("source")
+        if not isinstance(source, str):
+            continue
+        normalized_source = source.strip().casefold()
+        if normalized_source in _EXTERNAL_MESSAGE_SOURCES or normalized_source.startswith(_EXTERNAL_MESSAGE_SOURCE_PREFIXES):
+            return True
+    return False
 
 
 @dataclass
 class ToolRunSecurityContext:
-    """Run-local integrity state shared by the agent loop and dispatcher."""
-    run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     external_untrusted_context_seen: bool = False
-    workspace_untrusted_context_seen: bool = False
-    observed_tools: list[str] = field(default_factory=list)
+    external_sources: list[str] = field(default_factory=list)
+    run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    approval_gate_bypassed: bool = False
+
+    def observe_messages(self, messages: Iterable[dict]) -> None:
+        message_list = list(messages or ())
+        if any(isinstance(message, dict) and isinstance(message.get("metadata"), dict) and message["metadata"].get(CHAT_SESSION_APPROVAL_CONTEXT_MARKER) is True for message in message_list):
+            self.approval_gate_bypassed = True
+        if messages_contain_external_untrusted_context(message_list):
+            self.external_untrusted_context_seen = True
+
+    def decision_for(self, tool_name: Any, content: Any = None) -> ToolGateDecision:
+        if self.approval_gate_bypassed or not self.external_untrusted_context_seen:
+            return ToolGateDecision(True)
+        capabilities = capabilities_for_action(tool_name, content)
+        blocked_effects = capabilities.effects & POST_EXTERNAL_BLOCKED_EFFECTS
+        if capabilities.known and not blocked_effects:
+            return ToolGateDecision(True)
+        effects = ", ".join(sorted(effect.value for effect in blocked_effects)) or "unknown/high-impact"
+        return ToolGateDecision(False, f"External untrusted context has already influenced this run. Tool '{tool_name}' requires a separate user-authorized action because it can cause {effects}.")
 
     def observe_tool_result(self, tool_name: Any, result: Any, content: Any = None) -> None:
-        name = str(tool_name or "")
-        self.observed_tools.append(name)
-        capabilities = capabilities_for_action(name, content)
-        if capabilities.result_integrity is ResultIntegrity.EXTERNAL_UNTRUSTED:
-            self.external_untrusted_context_seen = True
-        elif capabilities.result_integrity is ResultIntegrity.WORKSPACE_UNTRUSTED:
-            self.workspace_untrusted_context_seen = True
-
-    def decision_for(self, tool_name: Any, content: Any) -> Any:
-        from dataclasses import dataclass
-
-        @dataclass(frozen=True)
-        class Decision:
-            allowed: bool
-            reason: str = ""
-
-        capabilities = capabilities_for_action(tool_name, content)
-        if capabilities.effects & {ToolEffect.EXTERNAL_SIDE_EFFECT, ToolEffect.ADMIN_CHANGE, ToolEffect.DESTRUCTIVE}:
-            if self.external_untrusted_context_seen:
-                return Decision(False, "High-impact action requires explicit approval after untrusted external context.")
-        return Decision(True)
+        if not tool_result_should_arm_gate(tool_name, result, content):
+            return
+        self.external_untrusted_context_seen = True
+        if isinstance(tool_name, str) and tool_name not in self.external_sources:
+            self.external_sources.append(tool_name)
 
 
-def blocked_tool_result(tool_name: Any, reason: str) -> tuple[str, dict[str, Any]]:
-    return f"{tool_name}: BLOCKED", {"error": reason, "exit_code": 1, "blocked": True}
-
-
-def tool_result_is_successful(result: Any) -> bool:
-    return isinstance(result, dict) and result.get("exit_code", 1) == 0 and not result.get("blocked")
-
-
-def tool_result_should_arm_gate(result: Any) -> bool:
-    return isinstance(result, dict) and result.get("external_untrusted") is True
-
-
-def messages_contain_external_untrusted_context(messages: Any) -> bool:
-    if not isinstance(messages, list):
-        return False
-    return any(isinstance(m, dict) and m.get("_external_untrusted") for m in messages)
-
-
-CHAT_SESSION_APPROVAL_CONTEXT_MARKER = CHAT_SESSION_APPROVAL_CONTEXT_MARKER
+def blocked_tool_result(tool_name: Any, reason: str) -> tuple[str, dict]:
+    return (f"{tool_name}: BLOCKED", {"error": reason, "exit_code": 1, "blocked": True, "policy": "external_untrusted_context"})
