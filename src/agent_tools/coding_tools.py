@@ -5,7 +5,6 @@ from typing import Any, Dict, List
 
 from src.constants import DATA_DIR
 
-
 _TODO_DIR = os.path.join(DATA_DIR, "agent_todos")
 _CODING_TASK_DIR = os.path.join(DATA_DIR, "coding_tasks")
 
@@ -24,7 +23,6 @@ class TodoWriteTool:
         todos = args.get("todos")
         if not isinstance(todos, list):
             return {"error": "todowrite: todos must be a list", "exit_code": 1}
-
         normalized: List[Dict[str, Any]] = []
         allowed_statuses = {"pending", "in_progress", "completed"}
         allowed_priorities = {"low", "medium", "high"}
@@ -46,13 +44,11 @@ class TodoWriteTool:
             normalized.append({"content": content_text, "status": status, "priority": priority})
         if active_count > 1:
             return {"error": "todowrite: only one todo can be in_progress", "exit_code": 1}
-
         session_id = _safe_session_id(str(ctx.get("session_id") or args.get("session_id") or "current"))
         os.makedirs(_TODO_DIR, exist_ok=True)
         path = os.path.join(_TODO_DIR, f"{session_id}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"todos": normalized}, f, ensure_ascii=False, indent=2)
-
         lines = []
         for item in normalized:
             marker = {"pending": " ", "in_progress": ">", "completed": "x"}[item["status"]]
@@ -61,42 +57,33 @@ class TodoWriteTool:
 
 
 class CodingTaskTool:
-    """Create/update bounded coding-task state without duplicating the agent loop."""
-
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.coding_agent import CodingAgentOrchestrator, CodingPolicy, CodingTaskState, TaskLimits, TaskStatus
-
+        from src.coding_agent import CodingAgentOrchestrator, CodingPolicy, CodingTaskState, TaskLimits, TaskStatus, AutonomyLevel
         try:
             args = json.loads(content or "{}")
         except (json.JSONDecodeError, TypeError):
             return {"error": "coding_task: JSON object required", "exit_code": 1}
         if not isinstance(args, dict):
             return {"error": "coding_task: object required", "exit_code": 1}
-
         session_id = _safe_session_id(str(ctx.get("session_id") or args.get("session_id") or "current"))
         task_id = _safe_session_id(str(args.get("task_id") or session_id))
         os.makedirs(_CODING_TASK_DIR, exist_ok=True)
         path = os.path.join(_CODING_TASK_DIR, f"{task_id}.json")
-
         if args.get("action") == "load" and os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 state_data = json.load(f)
             return {"output": "Loaded coding task state", "exit_code": 0, "state": state_data}
-
         workspace = str(args.get("workspace") or ctx.get("workspace") or "").strip()
         if not workspace:
             return {"error": "coding_task: an active workspace is required", "exit_code": 1}
         request = str(args.get("request") or "").strip()
         if not request:
             return {"error": "coding_task: request is required", "exit_code": 1}
-
         level = str(args.get("autonomy") or "balanced").lower()
         try:
-            from src.coding_agent import AutonomyLevel
             autonomy = AutonomyLevel(level)
         except ValueError:
             return {"error": f"coding_task: invalid autonomy level {level!r}", "exit_code": 1}
-
         limits = TaskLimits(
             max_iterations=max(1, min(int(args.get("max_iterations", 20)), 100)),
             max_tool_calls=max(1, min(int(args.get("max_tool_calls", 100)), 500)),
@@ -110,10 +97,54 @@ class CodingTaskTool:
         state.status = TaskStatus.PLANNING
         with open(path, "w", encoding="utf-8") as f:
             json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+        return {"output": f"Coding task initialized: {task_id}. Status: {state.status.value}. Next: inspect the repository and create a plan.", "exit_code": 0, "task_id": task_id, "state": state.to_dict(), "action": {"name": action.name, "status": action.status.value, "description": action.description}}
+
+
+class CodingInspectTool:
+    """Return bounded repository metadata without dumping source into context."""
+
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.coding_agent import RepositoryInspector, detect_test_commands, select_initial_context
+        try:
+            args = json.loads(content or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {"error": "coding_inspect: JSON object required", "exit_code": 1}
+        workspace = str(args.get("workspace") or ctx.get("workspace") or "").strip()
+        if not workspace:
+            return {"error": "coding_inspect: workspace is required", "exit_code": 1}
+        inspector = RepositoryInspector(workspace)
+        summary = inspector.summary()
         return {
-            "output": f"Coding task initialized: {task_id}. Status: {state.status.value}. Next: inspect the repository and create a plan.",
+            "output": "Repository inspected without loading source contents.",
             "exit_code": 0,
-            "task_id": task_id,
-            "state": state.to_dict(),
-            "action": {"name": action.name, "status": action.status.value, "description": action.description},
+            "summary": {"root": summary.root, "files": summary.files, "directories": summary.directories, "top_level": list(summary.top_level)},
+            "test_commands": [{"command": t.command, "reason": t.reason} for t in detect_test_commands(workspace)],
+            "candidate_files": select_initial_context(workspace, limit=max(1, min(int(args.get("limit", 40)), 100))),
         }
+
+
+class CodingGitTool:
+    """Read-only Git inspection for coding tasks."""
+
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.coding_agent import GitInspector
+        try:
+            args = json.loads(content or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return {"error": "coding_git: JSON object required", "exit_code": 1}
+        workspace = str(args.get("workspace") or ctx.get("workspace") or "").strip()
+        if not workspace:
+            return {"error": "coding_git: workspace is required", "exit_code": 1}
+        action = str(args.get("action") or "status").lower()
+        git = GitInspector(workspace)
+        if action == "status":
+            result = git.status()
+        elif action == "diff":
+            result = git.diff(bool(args.get("staged")))
+        elif action == "log":
+            result = git.log(int(args.get("limit", 10)))
+        elif action == "branches":
+            result = git.branches()
+        else:
+            return {"error": f"coding_git: unsupported read-only action {action!r}", "exit_code": 1}
+        return {"output": result.stdout, "stderr": result.stderr, "exit_code": result.returncode, "action": action}
