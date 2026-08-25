@@ -44,10 +44,12 @@ async def test_emit_status_uses_existing_progress_callback(tmp_path, monkeypatch
         "read_file",
         {"path": "src/app.py"},
     )
-    assert events[0]["type"] == "coding_agent_status"
-    assert events[0]["status"] == "inspecting"
-    assert events[0]["task"] == "Inspect the project"
-    assert events[0]["path"] == "src/app.py"
+    assert events[0]["type"] == "ui_control"
+    lifecycle = events[0]["data"]
+    assert lifecycle["ui_event"] == "coding_agent_status"
+    assert lifecycle["status"] == "inspecting"
+    assert lifecycle["task"] == "Inspect the project"
+    assert lifecycle["path"] == "src/app.py"
 
 
 def test_final_git_review_marks_verified_task_complete(tmp_path, monkeypatch):
