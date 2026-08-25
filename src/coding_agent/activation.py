@@ -19,7 +19,8 @@ CODING_AGENT_TOOLS = frozenset({
 
 _ACTION = re.compile(
     r"\b(?:build|create|implement|fix|debug|repair|refactor|change|update|add|remove|"
-    r"migrate|upgrade|test|verify|review|investigate|diagnose|connect|integrate|wire)\b",
+    r"migrate|upgrade|test|verify|review|investigate|diagnose|connect|integrate|wire|"
+    r"inspect|find|read|explain|summarize|describe|show|list)\b",
     re.IGNORECASE,
 )
 _TARGET = re.compile(
