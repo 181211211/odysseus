@@ -78,6 +78,7 @@ async def emit_status(ctx: Mapping[str, Any], session_id: str | None, status: st
         "type": "coding_agent_status",
         "status": status,
         "task_id": state.get("task_id"),
+        "task": state.get("request"),
         "tool": tool_name,
         "tool_calls": int(state.get("tool_calls", 0)),
         "iterations": int(state.get("iterations", 0)),
