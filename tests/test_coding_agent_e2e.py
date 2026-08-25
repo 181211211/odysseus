@@ -75,10 +75,10 @@ async def test_calculator_task_inspect_code_test_fix_retest_review(tmp_path: Pat
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
 
-    # Use a tiny real Python assertion as the project test command. This keeps
-    # the E2E test hermetic: it verifies shell execution and failure recovery
-    # without nesting pytest inside the already-running Odysseus pytest process.
-    verify = "python -c \"from calculator import add; assert add(2, 3) == 5\" # pytest verification"
+    # A real, hermetic project verification command. The explicit marker tells
+    # the controller this shell action is verification without relying on a
+    # particular test framework being installed in the nested project.
+    verify = "python -c \"from calculator import add; assert add(2, 3) == 5\" # coding-agent-verify"
     responses = [
         {"content": "Inspecting project", "tool_calls": [{"name": "coding_inspect", "arguments": {}}]},
         {"content": "Creating calculator", "tool_calls": [
