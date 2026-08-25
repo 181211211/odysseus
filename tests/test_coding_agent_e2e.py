@@ -1,6 +1,6 @@
 """End-to-end Coding Agent workflow using a real temporary repository.
 
-The model is scripted, but the repository, file edits, test execution and git
+The model is scripted, but the repository, file edits, pytest execution and git
 review are real. This verifies the autonomous controller as a complete coding
 workflow without making a network LLM call in CI.
 """
@@ -75,10 +75,10 @@ async def test_calculator_task_inspect_code_test_fix_retest_review(tmp_path: Pat
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
 
-    # A real, hermetic project verification command. The explicit marker tells
-    # the controller this shell action is verification without relying on a
-    # particular test framework being installed in the nested project.
-    verify = "python -c \"from calculator import add; assert add(2, 3) == 5\" # coding-agent-verify"
+    # Run the real generated pytest file, but disable auto-loaded third-party
+    # plugins and config discovery so this nested user-project test cannot
+    # inherit Odysseus' pytest environment.
+    verify = "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -c /dev/null test_calculator.py"
     responses = [
         {"content": "Inspecting project", "tool_calls": [{"name": "coding_inspect", "arguments": {}}]},
         {"content": "Creating calculator", "tool_calls": [
