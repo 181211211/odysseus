@@ -8,6 +8,7 @@ import themeModule from './theme.js';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
 import documentModule from './document.js?v=20260815approvalsave1';
+import codingAgentUI from './codingAgentUI.js?v=20260825lifecycle1';
 
 // Tool approvals are control-plane submits for the current chat. chat.js
 // deliberately leaves the composer untouched, then programmatically clicks the
@@ -47,7 +48,10 @@ export function handleUIControl(uiData) {
   var esc = uiModule.esc;
 
   try {
-    if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {
+    if (uiEvent === 'coding_agent_status' || uiData.ui_event === 'coding_agent_status') {
+      if (codingAgentUI && codingAgentUI.handleStatus) codingAgentUI.handleStatus(uiData);
+
+    } else if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {
       var toggleMap = {
         web: 'web-toggle', bash: 'bash-toggle', rag: 'rag-toggle',
         research: 'research-toggle', incognito: 'incognito-toggle',
