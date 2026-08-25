@@ -1,4 +1,4 @@
-from .context import ContextSelection, select_initial_context
+from .context import select_initial_context
 from .git import GitInspector
 from .loop import AutonomousCodingLoop, CodingLoopResult
 from .orchestrator import CodingAction, CodingAgentOrchestrator
@@ -16,5 +16,5 @@ __all__ = [
     "CodingTaskState", "TaskLimits", "TaskStatus",
     "RepositoryInspector", "RepositorySummary", "GitInspector",
     "TestCommand", "detect_test_commands",
-    "ContextSelection", "select_initial_context",
+    "select_initial_context",
 ]
