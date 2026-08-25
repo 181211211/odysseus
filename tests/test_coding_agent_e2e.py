@@ -54,7 +54,10 @@ async def local_executor(root: Path, name: str, args: dict):
             capture_output=True,
             timeout=30,
         )
-        return {"exit_code": proc.returncode, "output": proc.stdout, "stderr": proc.stderr}
+        result = {"exit_code": proc.returncode, "output": proc.stdout, "stderr": proc.stderr}
+        if proc.returncode != 0:
+            result["error"] = proc.stderr or proc.stdout or f"command exited with {proc.returncode}"
+        return result
     if name == "coding_git":
         action = args.get("action", "status")
         cmd = ["git", "status", "--short"] if action == "status" else ["git", "diff", "--", "."]
