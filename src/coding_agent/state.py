@@ -37,6 +37,9 @@ class CodingTaskState:
     request: str
     workspace: str
     status: TaskStatus = TaskStatus.PLANNING
+    autonomy: str = "balanced"
+    auto_commit: bool = False
+    auto_push: bool = False
     plan: list[str] = field(default_factory=list)
     current_step: int = 0
     inspected_files: list[str] = field(default_factory=list)
@@ -81,4 +84,9 @@ class CodingTaskState:
         values["status"] = TaskStatus(values.get("status", TaskStatus.PLANNING))
         limits = values.get("limits") or {}
         values["limits"] = TaskLimits(**limits)
+        # Backwards compatibility for tasks persisted before autonomy fields
+        # were introduced.
+        values.setdefault("autonomy", "balanced")
+        values.setdefault("auto_commit", False)
+        values.setdefault("auto_push", False)
         return cls(**values)
