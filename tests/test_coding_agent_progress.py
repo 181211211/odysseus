@@ -47,3 +47,36 @@ async def test_emit_status_uses_existing_progress_callback(tmp_path, monkeypatch
     assert events[0]["type"] == "coding_agent_status"
     assert events[0]["status"] == "inspecting"
     assert events[0]["path"] == "src/app.py"
+
+
+def test_final_git_review_marks_verified_task_complete(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "RUNTIME_DIR", str(tmp_path / "tasks"))
+    monkeypatch.setattr(runtime, "ACTIVE_TASKS_FILE", str(tmp_path / "tasks" / "active.json"))
+    path = progress.ensure_implicit_task("s3", str(tmp_path), "read_file", request="Fix the bug")
+    state = runtime._load_state(path)
+    state["tests"] = [{"command": "pytest -q", "exit_code": 0, "passed": True, "output": "ok"}]
+    state["reviewed"] = True
+    state["status"] = "reviewing"
+    runtime._save_state(path, state)
+
+    progress._mark_complete_if_verified("s3", "coding_git", {"action": "diff"}, {"output": "diff", "exit_code": 0})
+
+    assert runtime._load_state(path)["status"] == "completed"
+
+
+def test_failed_latest_test_prevents_completion(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "RUNTIME_DIR", str(tmp_path / "tasks"))
+    monkeypatch.setattr(runtime, "ACTIVE_TASKS_FILE", str(tmp_path / "tasks" / "active.json"))
+    path = progress.ensure_implicit_task("s4", str(tmp_path), "read_file", request="Fix the bug")
+    state = runtime._load_state(path)
+    state["tests"] = [
+        {"command": "pytest -q", "exit_code": 0, "passed": True, "output": "ok"},
+        {"command": "pytest -q", "exit_code": 1, "passed": False, "output": "failed"},
+    ]
+    state["reviewed"] = True
+    state["status"] = "reviewing"
+    runtime._save_state(path, state)
+
+    progress._mark_complete_if_verified("s4", "coding_git", {"action": "diff"}, {"output": "diff", "exit_code": 0})
+
+    assert runtime._load_state(path)["status"] == "reviewing"
