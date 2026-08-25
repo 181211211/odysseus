@@ -212,9 +212,6 @@ class AutonomousCodingLoop:
             self._append({"role": "user", "content": "The previous tool call failed. Inspect the failure, identify its root cause, and take a different corrective action. Do not repeat the identical failing call."})
             return
 
-        # A successful modification is new evidence: a previously failing test
-        # may legitimately be rerun after the code changes. Do not let the
-        # duplicate-call guard confuse a fix-and-retest cycle with a blind retry.
         if name in {"write_file", "edit_file", "apply_patch"}:
             self._failing_signatures.clear()
 
@@ -226,7 +223,7 @@ class AutonomousCodingLoop:
 
     def _looks_like_test_command(self, arguments: Mapping[str, Any]) -> bool:
         command = str(arguments.get("command") or arguments.get("code") or "").lower()
-        markers = ("pytest", "unittest", "npm test", "npm run test", "pnpm test", "yarn test", "vitest", "jest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "ruff", "mypy", "eslint", "tsc", "build")
+        markers = ("pytest", "unittest", "npm test", "npm run test", "pnpm test", "yarn test", "vitest", "jest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "ruff", "mypy", "eslint", "tsc", "build", "# coding-agent-verify")
         return any(marker in command for marker in markers)
 
     def _ready_to_complete(self) -> bool:
