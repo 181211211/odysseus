@@ -1,3 +1,4 @@
+from .activation import CODING_AGENT_TOOLS, CodingActivation, classify_coding_request, coding_mode_directive
 from .context import select_initial_context
 from .git import GitInspector
 from .loop import AutonomousCodingLoop, CodingLoopResult
@@ -11,6 +12,7 @@ from .state import CodingTaskState, TaskLimits, TaskStatus
 from .test_detection import TestCommand, detect_test_commands
 
 __all__ = [
+    "CODING_AGENT_TOOLS", "CodingActivation", "classify_coding_request", "coding_mode_directive",
     "AutonomousCodingLoop", "CodingLoopResult", "CodingModelAdapter", "parse_coding_response",
     "CodingAction", "CodingAgentOrchestrator",
     "AutonomyLevel", "CodingPolicy", "CommandAssessment", "assess_command",
