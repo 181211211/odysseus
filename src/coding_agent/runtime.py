@@ -15,6 +15,7 @@ ACTIVE_TASKS_FILE = os.path.join(RUNTIME_DIR, "active_tasks.json")
 _INSPECTION_TOOLS = {"coding_inspect", "ls", "glob", "grep", "read_file", "coding_git", "get_workspace"}
 _MODIFICATION_TOOLS = {"write_file", "edit_file", "apply_patch"}
 _SHELL_TOOLS = {"bash", "python"}
+_CODING_JSON_TOOLS = {"coding_task", "coding_inspect", "coding_git"}
 _TEST_MARKERS = ("pytest", "unittest", "npm test", "npm run test", "pnpm test", "yarn test", "vitest", "jest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "ruff", "mypy", "eslint", "tsc", "build")
 
 
@@ -77,6 +78,39 @@ def _save_state(path: str, state: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def current_workspace(ctx: Mapping[str, Any] | None = None) -> str | None:
+    """Resolve the dispatcher-bound workspace without widening authority."""
+    if isinstance(ctx, Mapping) and ctx.get("workspace"):
+        return str(ctx.get("workspace"))
+    try:
+        from src.tool_execution import get_active_workspace
+        value = get_active_workspace()
+        return str(value) if value else None
+    except Exception:
+        return None
+
+
+def prepare_tool_content(tool_name: str, content: str | None, workspace: str | None) -> str:
+    """Inject the already-authorized active workspace into coding JSON tools.
+
+    This is convenience plumbing only: tool_execution has already bound and
+    vetted the workspace for the call, and the normal path-security layer still
+    enforces confinement. Explicit model-supplied workspaces are never replaced.
+    """
+    raw = str(content or "")
+    if tool_name not in _CODING_JSON_TOOLS or not workspace:
+        return raw
+    stripped = raw.strip()
+    try:
+        payload = json.loads(stripped) if stripped else {}
+    except (json.JSONDecodeError, TypeError):
+        return raw
+    if not isinstance(payload, dict) or payload.get("workspace"):
+        return raw
+    payload["workspace"] = workspace
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def parse_tool_arguments(tool_name: str, content: str | None, *, workspace: str | None = None) -> dict[str, Any]:
     """Parse tool payloads for telemetry only; never use this for authorization."""
     raw = str(content or "")
@@ -85,6 +119,9 @@ def parse_tool_arguments(tool_name: str, content: str | None, *, workspace: str 
         try:
             value = json.loads(stripped)
             if isinstance(value, dict):
+                if workspace and not value.get("workspace"):
+                    value = dict(value)
+                    value["workspace"] = workspace
                 return dict(value)
         except (json.JSONDecodeError, TypeError):
             pass
@@ -186,12 +223,7 @@ def after_tool(session_id: str | None, tool_name: str, arguments: Mapping[str, A
 
 
 def install_runtime_hooks(tool_handlers: dict[str, Any]) -> None:
-    """Wrap the existing handler registry without replacing the dispatcher.
-
-    The wrapper receives the same ctx used by Odysseus today, so all existing
-    security/approval/path controls remain authoritative. It only adds bounded
-    coding-task accounting around successful dispatcher routing.
-    """
+    """Wrap the existing handler registry without replacing the dispatcher."""
     if getattr(install_runtime_hooks, "_installed", False):
         return
     for name, handler in list(tool_handlers.items()):
@@ -201,13 +233,14 @@ def install_runtime_hooks(tool_handlers: dict[str, Any]) -> None:
         async def wrapped(content, ctx, _handler=handler, _name=name):
             ctx = ctx if isinstance(ctx, dict) else {}
             session_id = ctx.get("session_id")
-            workspace = ctx.get("workspace")
-            arguments = parse_tool_arguments(_name, content, workspace=workspace)
+            workspace = current_workspace(ctx)
+            prepared_content = prepare_tool_content(_name, content, workspace)
+            arguments = parse_tool_arguments(_name, prepared_content, workspace=workspace)
             blocked = before_tool(session_id, _name, arguments)
             if blocked is not None:
                 return blocked
             try:
-                result = await _handler(content, ctx)
+                result = await _handler(prepared_content, ctx)
             except Exception as exc:
                 result = {"error": str(exc), "exit_code": 1}
             if isinstance(result, Mapping):
