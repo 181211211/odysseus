@@ -289,7 +289,10 @@ class ToolRunSecurityContext:
         blocked_effects = capabilities.effects & POST_EXTERNAL_BLOCKED_EFFECTS
         if capabilities.known and not blocked_effects:
             return ToolGateDecision(True)
-        effects = ", ".join(sorted(effect.value for effect in blocked_effects)) or "unknown/high-impact"
+        if not capabilities.known:
+            effects = "unknown/high-impact"
+        else:
+            effects = ", ".join(sorted(effect.value for effect in blocked_effects)) or "unknown/high-impact"
         return ToolGateDecision(False, f"External untrusted context has already influenced this run. Tool '{tool_name}' requires a separate user-authorized action because it can cause {effects}.")
 
     def observe_tool_result(self, tool_name: Any, result: Any, content: Any = None) -> None:
