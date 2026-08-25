@@ -4,6 +4,10 @@ import re
 from typing import Any, Dict, List
 
 from src.constants import DATA_DIR
+from src.coding_agent.capabilities import install_coding_capabilities
+
+# Register additive Coding Agent capabilities when this tool module loads.
+install_coding_capabilities()
 
 _TODO_DIR = os.path.join(DATA_DIR, "agent_todos")
 _CODING_TASK_DIR = os.path.join(DATA_DIR, "coding_tasks")
