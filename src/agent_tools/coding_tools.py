@@ -102,6 +102,13 @@ class CodingTaskTool:
             autonomy = AutonomyLevel(level)
         except ValueError:
             return {"error": f"coding_task: invalid autonomy level {level!r}", "exit_code": 1}
+        auto_commit = bool(args.get("auto_commit", False))
+        auto_push = bool(args.get("auto_push", False))
+        # Push is intentionally opt-in independently of the autonomy level.
+        # Enabling it also implies commit permission, but neither flag bypasses
+        # the existing tool-security/exact-approval layer.
+        if auto_push:
+            auto_commit = True
         try:
             limits = TaskLimits(
                 max_iterations=max(1, min(int(args.get("max_iterations", 20)), 100)),
@@ -112,13 +119,24 @@ class CodingTaskTool:
             )
         except (TypeError, ValueError):
             return {"error": "coding_task: numeric limits must be valid integers", "exit_code": 1}
-        state = CodingTaskState(task_id=task_id, request=request, workspace=workspace, limits=limits)
-        orchestrator = CodingAgentOrchestrator(state, CodingPolicy(autonomy))
+        state = CodingTaskState(
+            task_id=task_id,
+            request=request,
+            workspace=workspace,
+            autonomy=autonomy.value,
+            auto_commit=auto_commit,
+            auto_push=auto_push,
+            limits=limits,
+        )
+        orchestrator = CodingAgentOrchestrator(
+            state,
+            CodingPolicy(autonomy, allow_auto_commit=auto_commit, allow_auto_push=auto_push),
+        )
         action = orchestrator.begin()
         state.status = TaskStatus.PLANNING
         _save_state(path, state.to_dict())
         register_active_task(session_id, task_id, path)
-        return {"output": f"Coding task initialized: {task_id}. Status: {state.status.value}. Next: inspect the repository and create a plan.", "exit_code": 0, "task_id": task_id, "state": state.to_dict(), "action": {"name": action.name, "status": action.status.value, "description": action.description}}
+        return {"output": f"Coding task initialized: {task_id}. Status: {state.status.value}. Autonomy: {state.autonomy}. Next: inspect the repository and create a plan.", "exit_code": 0, "task_id": task_id, "state": state.to_dict(), "action": {"name": action.name, "status": action.status.value, "description": action.description}}
 
 
 class CodingInspectTool:
