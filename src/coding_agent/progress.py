@@ -113,6 +113,24 @@ def _record_iteration_for_test(session_id: str | None, tool_name: str, arguments
     runtime._save_state(path, state)
 
 
+def _mark_complete_if_verified(session_id: str | None, tool_name: str, arguments: Mapping[str, Any], result: Any) -> None:
+    """Close implicit tasks only after successful tests and final git review."""
+    if tool_name != "coding_git" or str(arguments.get("action") or "").lower() not in {"status", "diff"}:
+        return
+    if isinstance(result, Mapping) and (result.get("error") or result.get("blocked") or result.get("approval_required")):
+        return
+    path = runtime.active_task_path(session_id)
+    state = runtime._load_state(path) if path else None
+    if not state:
+        return
+    tests = state.get("tests") or []
+    has_passing_test = any(isinstance(test, Mapping) and test.get("passed") is True for test in tests)
+    has_failed_latest = bool(tests and isinstance(tests[-1], Mapping) and tests[-1].get("passed") is False)
+    if has_passing_test and not has_failed_latest and state.get("reviewed"):
+        state["status"] = TaskStatus.COMPLETED.value
+        runtime._save_state(path, state)
+
+
 def install_progress_hooks(tool_handlers: dict[str, Any]) -> None:
     """Add lifecycle events around the already-secured runtime handlers."""
     if getattr(install_progress_hooks, "_installed", False):
@@ -144,6 +162,7 @@ def install_progress_hooks(tool_handlers: dict[str, Any]) -> None:
             result = await _handler(content, ctx)
 
             if runtime.active_task_path(session_id):
+                _mark_complete_if_verified(session_id, _name, arguments, result)
                 latest = task_snapshot(session_id) or {}
                 final_status = str(latest.get("status") or status_for_tool(_name, arguments))
                 if isinstance(result, Mapping) and (result.get("blocked") or result.get("approval_required")):
