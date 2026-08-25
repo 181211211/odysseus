@@ -62,9 +62,6 @@ class AutonomousCodingLoop:
             try:
                 response = await self.model.complete(self._context())
             except (IndexError, StopIteration) as exc:
-                # A finite test/dry-run model can intentionally exhaust its scripted
-                # responses. Treat that as a bounded pause rather than a false
-                # production-style model failure.
                 self.state.status = TaskStatus.PAUSED
                 self.state.errors.append({"message": str(exc) or "Model response sequence exhausted", "category": "model_exhausted"})
                 await self._persist()
@@ -108,7 +105,7 @@ class AutonomousCodingLoop:
                 repeated = self._is_repeated_failing_call(signature)
                 if repeated:
                     result: Mapping[str, Any] = {
-                        "error": "Identical failing command/tool call was already attempted. Inspect new evidence or change the approach.",
+                        "error": "Identical failing command/tool call was already attempted without any intervening corrective change. Inspect new evidence or change the approach.",
                         "exit_code": 1,
                         "policy": "duplicate_failure_guard",
                     }
@@ -213,6 +210,13 @@ class AutonomousCodingLoop:
                 self.state.status = TaskStatus.PAUSED
                 return
             self._append({"role": "user", "content": "The previous tool call failed. Inspect the failure, identify its root cause, and take a different corrective action. Do not repeat the identical failing call."})
+            return
+
+        # A successful modification is new evidence: a previously failing test
+        # may legitimately be rerun after the code changes. Do not let the
+        # duplicate-call guard confuse a fix-and-retest cycle with a blind retry.
+        if name in {"write_file", "edit_file", "apply_patch"}:
+            self._failing_signatures.clear()
 
         if name == "coding_git":
             action = str(arguments.get("action") or "")
