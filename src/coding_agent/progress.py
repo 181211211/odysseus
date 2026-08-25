@@ -74,8 +74,8 @@ async def emit_status(ctx: Mapping[str, Any], session_id: str | None, status: st
     if not callable(callback):
         return
     state = task_snapshot(session_id) or {}
-    payload: dict[str, Any] = {
-        "type": "coding_agent_status",
+    lifecycle: dict[str, Any] = {
+        "ui_event": "coding_agent_status",
         "status": status,
         "task_id": state.get("task_id"),
         "task": state.get("request"),
@@ -85,10 +85,14 @@ async def emit_status(ctx: Mapping[str, Any], session_id: str | None, status: st
     }
     path = arguments.get("path") or arguments.get("file")
     if isinstance(path, str) and path:
-        payload["path"] = path
+        lifecycle["path"] = path
     command = str(arguments.get("command") or arguments.get("code") or "").strip()
     if command:
-        payload["command"] = command[:300]
+        lifecycle["command"] = command[:300]
+
+    # The chat SSE reader already has a stable ui_control route. Reuse it instead
+    # of creating a parallel event protocol just for Coding Agent visibility.
+    payload: dict[str, Any] = {"type": "ui_control", "data": lifecycle}
     value = callback(payload)
     if inspect.isawaitable(value):
         await value
