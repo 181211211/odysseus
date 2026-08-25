@@ -31,7 +31,7 @@ def test_implicit_task_requires_real_workspace_action(tmp_path, monkeypatch):
 async def test_emit_status_uses_existing_progress_callback(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "RUNTIME_DIR", str(tmp_path / "tasks"))
     monkeypatch.setattr(runtime, "ACTIVE_TASKS_FILE", str(tmp_path / "tasks" / "active.json"))
-    progress.ensure_implicit_task("s2", str(tmp_path), "read_file")
+    progress.ensure_implicit_task("s2", str(tmp_path), "read_file", request="Inspect the project")
     events = []
 
     async def callback(event):
@@ -46,6 +46,7 @@ async def test_emit_status_uses_existing_progress_callback(tmp_path, monkeypatch
     )
     assert events[0]["type"] == "coding_agent_status"
     assert events[0]["status"] == "inspecting"
+    assert events[0]["task"] == "Inspect the project"
     assert events[0]["path"] == "src/app.py"
 
 
