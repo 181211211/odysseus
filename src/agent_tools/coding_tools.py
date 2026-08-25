@@ -73,7 +73,7 @@ class TodoWriteTool:
 
 class CodingTaskTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.coding_agent import CodingAgentOrchestrator, CodingPolicy, CodingTaskState, TaskLimits, TaskStatus, AutonomyLevel
+        from src.coding_agent import CodingAgentOrchestrator, CodingPolicy, CodingTaskState, TaskLimits, TaskStatus, AutonomyLevel, register_active_task
         try:
             args = json.loads(content or "{}")
         except (json.JSONDecodeError, TypeError):
@@ -84,12 +84,13 @@ class CodingTaskTool:
         task_id = _safe_session_id(str(args.get("task_id") or session_id))
         path = _task_path(task_id)
         action_name = str(args.get("action") or "start").lower()
-        if action_name == "load":
+        if action_name in {"load", "status"}:
             if not os.path.exists(path):
                 return {"error": f"coding_task: task {task_id!r} does not exist", "exit_code": 1}
             with open(path, "r", encoding="utf-8") as f:
                 state_data = json.load(f)
-            return {"output": "Loaded coding task state", "exit_code": 0, "state": state_data}
+            register_active_task(session_id, task_id, path)
+            return {"output": "Loaded coding task state", "exit_code": 0, "state": state_data, "task_id": task_id}
         workspace = str(args.get("workspace") or ctx.get("workspace") or "").strip()
         if not workspace:
             return {"error": "coding_task: an active workspace is required", "exit_code": 1}
@@ -116,6 +117,7 @@ class CodingTaskTool:
         action = orchestrator.begin()
         state.status = TaskStatus.PLANNING
         _save_state(path, state.to_dict())
+        register_active_task(session_id, task_id, path)
         return {"output": f"Coding task initialized: {task_id}. Status: {state.status.value}. Next: inspect the repository and create a plan.", "exit_code": 0, "task_id": task_id, "state": state.to_dict(), "action": {"name": action.name, "status": action.status.value, "description": action.description}}
 
 
