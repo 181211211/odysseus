@@ -5,6 +5,7 @@ import pytest
 
 from src.agent_tools import FUNCTION_TOOL_SCHEMAS, TOOL_HANDLERS
 from src.coding_agent import AutonomyLevel, CodingPolicy, CodingTaskState, RepositoryInspector, TaskLimits, TaskStatus, assess_command, detect_test_commands
+from src.tool_capabilities import ResultIntegrity, ToolEffect, capabilities_for_tool
 
 
 def test_task_state_enforces_budgets():
@@ -50,6 +51,18 @@ def test_coding_tools_are_registered_for_native_calls():
     assert {"coding_task", "coding_inspect", "coding_git"}.issubset(TOOL_HANDLERS)
     names = {item["function"]["name"] for item in FUNCTION_TOOL_SCHEMAS}
     assert {"coding_task", "coding_inspect", "coding_git"}.issubset(names)
+
+
+def test_coding_tools_use_workspace_safe_capabilities():
+    task = capabilities_for_tool("coding_task")
+    inspect = capabilities_for_tool("coding_inspect")
+    git = capabilities_for_tool("coding_git")
+    assert ToolEffect.WRITE_PRIVATE in task.effects
+    assert task.result_integrity is ResultIntegrity.SYSTEM
+    assert ToolEffect.READ_WORKSPACE in inspect.effects
+    assert inspect.result_integrity is ResultIntegrity.WORKSPACE_UNTRUSTED
+    assert ToolEffect.READ_WORKSPACE in git.effects
+    assert git.result_integrity is ResultIntegrity.WORKSPACE_UNTRUSTED
 
 
 @pytest.mark.asyncio
