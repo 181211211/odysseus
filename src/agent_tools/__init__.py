@@ -100,8 +100,9 @@ FUNCTION_TOOL_SCHEMAS.extend([
     {"type": "function", "function": {"name": "coding_git", "description": "Read-only Git inspection for a coding task. Supports status, diff, log, and branches. Never modifies or pushes the repository.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["status", "diff", "log", "branches"]}, "workspace": {"type": "string"}, "staged": {"type": "boolean"}, "limit": {"type": "integer"}}, "required": ["action"]}}},
 ])
 
-# Hook the existing handler registry only after it has been fully constructed.
-# The hook records coding-task budgets/telemetry; it does not replace or bypass
-# Odysseus' existing dispatcher, approval, capability, or path-security layers.
+# Install the accounting/security-preserving runtime wrapper first, then the
+# progress wrapper around it. Both reuse the normal Odysseus dispatcher.
 from src.coding_agent.runtime import install_runtime_hooks  # noqa: E402
 install_runtime_hooks(TOOL_HANDLERS)
+from src.coding_agent.progress import install_progress_hooks  # noqa: E402
+install_progress_hooks(TOOL_HANDLERS)
