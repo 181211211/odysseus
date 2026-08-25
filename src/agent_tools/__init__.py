@@ -95,14 +95,17 @@ from .document_tools import set_active_document, set_active_model
 from src.tool_implementations import do_search_chats, do_manage_skills, do_manage_tasks, do_api_call
 
 FUNCTION_TOOL_SCHEMAS.extend([
-    {"type": "function", "function": {"name": "coding_task", "description": "Initialize or load a bounded autonomous coding task in the active workspace. Use this at the start of a substantial repository coding request.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["start", "load", "status"]}, "task_id": {"type": "string"}, "request": {"type": "string"}, "workspace": {"type": "string"}, "autonomy": {"type": "string", "enum": ["safe", "balanced", "autonomous"]}, "max_iterations": {"type": "integer"}, "max_tool_calls": {"type": "integer"}, "max_shell_commands": {"type": "integer"}, "max_execution_seconds": {"type": "integer"}, "max_test_retries": {"type": "integer"}}, "required": ["action"]}}},
+    {"type": "function", "function": {"name": "coding_task", "description": "Initialize or load a bounded autonomous coding task in the active workspace. Use this at the start of a substantial repository coding request.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["start", "load", "status"]}, "task_id": {"type": "string"}, "request": {"type": "string"}, "workspace": {"type": "string"}, "autonomy": {"type": "string", "enum": ["safe", "balanced", "autonomous"]}, "auto_commit": {"type": "boolean"}, "auto_push": {"type": "boolean"}, "max_iterations": {"type": "integer"}, "max_tool_calls": {"type": "integer"}, "max_shell_commands": {"type": "integer"}, "max_execution_seconds": {"type": "integer"}, "max_test_retries": {"type": "integer"}}, "required": ["action"]}}},
     {"type": "function", "function": {"name": "coding_inspect", "description": "Inspect the active repository without dumping source contents. Returns bounded repository metadata, likely context files, and detected test commands.", "parameters": {"type": "object", "properties": {"workspace": {"type": "string"}, "limit": {"type": "integer"}}, "required": []}}},
     {"type": "function", "function": {"name": "coding_git", "description": "Read-only Git inspection for a coding task. Supports status, diff, log, and branches. Never modifies or pushes the repository.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["status", "diff", "log", "branches"]}, "workspace": {"type": "string"}, "staged": {"type": "boolean"}, "limit": {"type": "integer"}}, "required": ["action"]}}},
 ])
 
-# Install the accounting/security-preserving runtime wrapper first, then the
-# progress wrapper around it. Both reuse the normal Odysseus dispatcher.
+# Layer the Coding Agent around the normal dispatcher. Runtime accounting stays
+# innermost; autonomy can reject an action before it executes; progress remains
+# outermost so waiting-approval events are surfaced through the existing UI.
 from src.coding_agent.runtime import install_runtime_hooks  # noqa: E402
 install_runtime_hooks(TOOL_HANDLERS)
+from src.coding_agent.autonomy import install_autonomy_hooks  # noqa: E402
+install_autonomy_hooks(TOOL_HANDLERS)
 from src.coding_agent.progress import install_progress_hooks  # noqa: E402
 install_progress_hooks(TOOL_HANDLERS)
