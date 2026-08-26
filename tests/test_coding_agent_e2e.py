@@ -75,9 +75,6 @@ async def test_calculator_task_inspect_code_test_fix_retest_review(tmp_path: Pat
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
 
-    # Run the real generated pytest file, but disable auto-loaded third-party
-    # plugins and config discovery so this nested user-project test cannot
-    # inherit Odysseus' pytest environment.
     verify = "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -c /dev/null test_calculator.py"
     responses = [
         {"content": "Inspecting project", "tool_calls": [{"name": "coding_inspect", "arguments": {}}]},
@@ -103,15 +100,17 @@ async def test_calculator_task_inspect_code_test_fix_retest_review(tmp_path: Pat
         return await local_executor(tmp_path, name, args)
 
     loop = AutonomousCodingLoop(state, ScriptedModel(responses), execute)
+    assert loop._looks_like_test_command({"command": verify}) is True
     result = await loop.run()
 
-    assert result.status is TaskStatus.COMPLETED
-    assert result.tests_passed is True
-    assert result.reviewed is True
-    assert state.test_retries == 1
-    assert len(state.tests) == 2
-    assert state.tests[0]["passed"] is False
-    assert state.tests[1]["passed"] is True
+    diagnostics = f"tests={state.tests!r}; retries={state.test_retries}; errors={state.errors!r}; commands={state.commands!r}"
+    assert result.status is TaskStatus.COMPLETED, diagnostics
+    assert result.tests_passed is True, diagnostics
+    assert result.reviewed is True, diagnostics
+    assert state.test_retries == 1, diagnostics
+    assert len(state.tests) == 2, diagnostics
+    assert state.tests[0]["passed"] is False, diagnostics
+    assert state.tests[1]["passed"] is True, diagnostics
     assert (tmp_path / "calculator.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
     assert "calculator.py" in state.modified_files
     assert "test_calculator.py" in state.modified_files
