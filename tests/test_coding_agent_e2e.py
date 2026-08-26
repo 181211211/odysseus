@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -45,6 +47,12 @@ async def local_executor(root: Path, name: str, args: dict):
         path.write_text(text.replace(old, new, 1), encoding="utf-8")
         return {"exit_code": 0, "output": f"edited {args['path']}"}
     if name == "bash":
+        env = os.environ.copy()
+        # Full-suite tests may mutate Python import state/environment. A Coding
+        # Agent project command must start from its workspace, not inherit the
+        # Odysseus checkout through PYTHONPATH or pytest's current sys.path.
+        env.pop("PYTHONPATH", None)
+        env["PYTHONNOUSERSITE"] = "1"
         proc = await asyncio.to_thread(
             subprocess.run,
             args["command"],
@@ -53,6 +61,7 @@ async def local_executor(root: Path, name: str, args: dict):
             text=True,
             capture_output=True,
             timeout=30,
+            env=env,
         )
         result = {"exit_code": proc.returncode, "output": proc.stdout, "stderr": proc.stderr}
         if proc.returncode != 0:
@@ -75,7 +84,10 @@ async def test_calculator_task_inspect_code_test_fix_retest_review(tmp_path: Pat
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
 
-    verify = "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -c /dev/null test_calculator.py"
+    # Use the same interpreter that is running Odysseus' tests. Quoting the
+    # absolute path avoids PATH/interpreter changes caused by unrelated tests.
+    python = json.dumps(sys.executable)
+    verify = f"PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 {python} -m pytest -q -c /dev/null test_calculator.py"
     responses = [
         {"content": "Inspecting project", "tool_calls": [{"name": "coding_inspect", "arguments": {}}]},
         {"content": "Creating calculator", "tool_calls": [
