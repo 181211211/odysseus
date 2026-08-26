@@ -1,9 +1,9 @@
 """Runtime bridge from the existing workspace chat flow into Coding Agent state.
 
 The normal Odysseus agent loop already routes substantial workspace work through
-its Terminus toolset and instructs the model to maintain a todo list.  This
-bridge uses that existing boundary: the first successful ``todowrite`` in an
-active workspace lazily creates Coding Agent task state when no task is active.
+its Terminus toolset and instructs the model to maintain a todo list. This bridge
+uses that existing boundary: the first successful ``todowrite`` in an active
+workspace lazily creates Coding Agent task state when no task is active.
 No route, security, approval, or filesystem policy is bypassed.
 """
 
@@ -55,11 +55,11 @@ def _bootstrap_task(content: str, ctx: dict) -> None:
         CodingTaskState,
         TaskLimits,
         TaskStatus,
-        get_active_task,
+        active_task_path,
         register_active_task,
     )
 
-    if get_active_task(session_id):
+    if active_task_path(session_id):
         return
 
     request = _request_from_todos(content)
