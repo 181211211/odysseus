@@ -89,12 +89,15 @@ async def test_calculator_task_inspect_code_test_fix_retest_review(tmp_path: Pat
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
 
-    # Use the same interpreter that is running Odysseus' tests. Quoting the
-    # absolute path avoids PATH/interpreter changes caused by unrelated tests.
+    # Verify the generated module with the Python standard library only. Using
+    # the outer test environment's pytest executable made this E2E test depend
+    # on optional packages (for example pygments) that are unrelated to the
+    # coding-agent workflow. The marker keeps this recognized as a test command.
     # -B plus PYTHONDONTWRITEBYTECODE prevents a stale timestamp-based .pyc from
     # masking the same-size source edit between the failing and passing runs.
     python = json.dumps(sys.executable)
-    verify = f"PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 {python} -B -m pytest -q -c /dev/null test_calculator.py"
+    check = json.dumps("from calculator import add; assert add(2, 3) == 5")
+    verify = f"PYTHONDONTWRITEBYTECODE=1 {python} -B -c {check} # coding-agent-verify"
     responses = [
         {"content": "Inspecting project", "tool_calls": [{"name": "coding_inspect", "arguments": {}}]},
         {"content": "Creating calculator", "tool_calls": [
