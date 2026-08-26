@@ -53,6 +53,11 @@ async def local_executor(root: Path, name: str, args: dict):
         # Odysseus checkout through PYTHONPATH or pytest's current sys.path.
         env.pop("PYTHONPATH", None)
         env["PYTHONNOUSERSITE"] = "1"
+        # The first verification imports calculator.py and may create a .pyc.
+        # The scripted fix changes `a - b` to `a + b`, preserving file size and
+        # often landing in the same filesystem timestamp second. Disable bytecode
+        # caching so the second verification always executes the edited source.
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         proc = await asyncio.to_thread(
             subprocess.run,
             args["command"],
@@ -86,8 +91,10 @@ async def test_calculator_task_inspect_code_test_fix_retest_review(tmp_path: Pat
 
     # Use the same interpreter that is running Odysseus' tests. Quoting the
     # absolute path avoids PATH/interpreter changes caused by unrelated tests.
+    # -B plus PYTHONDONTWRITEBYTECODE prevents a stale timestamp-based .pyc from
+    # masking the same-size source edit between the failing and passing runs.
     python = json.dumps(sys.executable)
-    verify = f"PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 {python} -m pytest -q -c /dev/null test_calculator.py"
+    verify = f"PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 {python} -B -m pytest -q -c /dev/null test_calculator.py"
     responses = [
         {"content": "Inspecting project", "tool_calls": [{"name": "coding_inspect", "arguments": {}}]},
         {"content": "Creating calculator", "tool_calls": [
