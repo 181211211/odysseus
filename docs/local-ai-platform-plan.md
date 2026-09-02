@@ -1,12 +1,10 @@
 # Local AI Platform Plan
 
-This document defines how the Odysseus fork evolves into a local-first AI workspace with ChatGPT/Claude-style chat, research, coding, memory, RAG, tool use, model routing, and secure autonomous execution.
+This document defines how this Odysseus fork evolves into a local-first AI workspace with ChatGPT/Claude-style chat, research, coding, memory, RAG, tool use, model routing, and secure autonomous execution.
 
-## 1. Architecture decision
+## Architecture decision
 
-Do **not** create a second application or replace Odysseus' existing runtime. Extend the current architecture and keep the existing model, tool, security, session, research, memory, RAG, MCP, and UI systems authoritative.
-
-The target architecture is:
+Do **not** create a second application or replace Odysseus' existing runtime. Extend the current architecture and keep the existing model, tool, security, session, research, memory, RAG, MCP, context-management, and UI systems authoritative.
 
 ```text
 UI / Chat / Workspace
@@ -23,16 +21,15 @@ Existing Agent Runtime + Specialized Controllers
         +--> Document / RAG controller
         |
         v
-Shared Model Abstraction
+Existing Model Resolution + Capability Metadata
         |
         +--> Ollama
-        +--> OpenAI-compatible
-        +--> OpenRouter
-        +--> Anthropic
-        +--> other configured Odysseus endpoints
+        +--> llama.cpp / LM Studio
+        +--> OpenAI-compatible / vLLM / SGLang
+        +--> OpenRouter / OpenAI / Google / other configured endpoints
         |
         v
-Shared Tool Dispatcher
+Existing Tool Dispatcher
         |
         +--> filesystem / git / shell
         +--> web / research
@@ -46,29 +43,35 @@ Security + Approvals + Workspace Confinement
 
 The existing dispatcher and security policy remain the only path to privileged tools.
 
-## 2. Existing components to reuse
+## Existing components to reuse
 
-### Model/provider layer
+### Model/provider and capability layer
 
-Reuse Odysseus' existing endpoint configuration, `_resolve_model`, endpoint resolver, and `llm_core` rather than introducing another provider registry. The current system already resolves configured local and remote endpoints and routes requests through provider-neutral call paths.
+Reuse Odysseus' endpoint configuration, `_resolve_model`, `endpoint_resolver`, `llm_core`, `foreground_model_routing`, `model_context`, and the existing `src/model_capabilities.py` system. Do not create a second capability registry.
 
-The Coding Agent must continue using the same model resolution path. Model capability metadata should be layered on top of the existing endpoint records instead of replacing them.
+The existing capability system already models families, modalities, capabilities such as tool calling/reasoning/vision/structured output, source/confidence, capability assertions, deterministic controls, and capability probes. Vendor readers already exist for Ollama, llama.cpp, LM Studio, OpenAI, OpenRouter, Google, and generic OpenAI-compatible endpoints.
+
+The Coding and Research controllers should consume this capability metadata to choose safe execution strategies. Unknown or weak model capabilities must degrade conservatively.
 
 ### Agent runtime
 
-Reuse `src/agent_loop.py`, the current tool execution pipeline, session state, owner/security context, exact approvals, and tool policy. Specialized modes should be controllers that compose with this runtime, not independent agents with unrestricted execution.
+Reuse `src/agent_loop.py`, the current tool execution pipeline, session state, owner/security context, exact approvals, and tool policy. Specialized modes are controllers that compose with this runtime, not independent agents with unrestricted execution.
 
 ### Coding Agent
 
-Reuse the existing `src/coding_agent/` package and extend it. It already provides task state, bounded autonomous iteration, provider-neutral model access, repository context selection, test detection, Git inspection, approvals/autonomy policy, UI lifecycle events, and the secured dispatcher bridge.
+Reuse and extend `src/coding_agent/`. It already contains bounded autonomous iteration, task state, provider-neutral model access, repository context selection, test detection, Git inspection, approval/autonomy policy, UI lifecycle events, a secured dispatcher bridge, and an end-to-end test/fix/review workflow.
 
 ### Research
 
-Reuse the existing research routes and web/research tooling. Research work should add deterministic source tracking, research plans, evidence quality metadata, contradiction handling, and source-led synthesis rather than building a separate search stack.
+Reuse `src/deep_research.py`, `src/research_handler.py`, the research routes, and existing search tools. Add deterministic source ledgers, persistent research task state, contradiction/freshness handling, and stronger source-grounded synthesis instead of creating a parallel search stack.
+
+### Context management
+
+Reuse `src/context_budget.py`, `src/context_compactor.py`, and `src/model_context.py`. Coding/research-specific context selectors should feed these systems rather than implementing a separate long-context framework.
 
 ### Memory and RAG
 
-Reuse the existing memory manager, vector memory, RAG manager, personal documents manager, and document ingestion paths. Add scoping and retrieval policy where needed rather than replacing storage.
+Reuse `src/memory.py`, `memory_provider.py`, `memory_vector.py`, `rag_manager.py`, `rag_vector.py`, `personal_docs.py`, existing embeddings infrastructure, and document ingestion. Add explicit scopes and a common retrieval facade where needed rather than replacing storage.
 
 Memory scopes should become explicit:
 
@@ -76,133 +79,91 @@ Memory scopes should become explicit:
 - project/workspace memory
 - user memory
 
-Sensitive repository content must not automatically become user long-term memory.
+Sensitive repository content must not automatically become long-term user memory.
 
-### MCP and tools
+### MCP, tools, and security
 
-Reuse the current tool registry and MCP integration. Third-party MCP output and repository/web content remain untrusted data and cannot expand tool authority.
+Reuse the tool registry, MCP manager, `tool_execution.py`, `tool_policy.py`, `tool_security.py`, approvals, prompt-security helpers, URL safety, and secret storage. Third-party MCP output and repository/web/document content remain untrusted data and cannot expand tool authority.
 
 ### UI
 
-Reuse the existing chat UI and status stream. Specialized modes should add status cards, source panels, plans, diff summaries, and approval prompts without introducing a second frontend framework.
+Reuse the existing chat UI and status stream. Specialized modes add status cards, source panels, plans, diff summaries, and approval prompts without introducing a second frontend framework.
 
-## 3. Target capabilities
+## Target modes
 
-### General assistant
+### Chat
 
-- streaming chat
-- local and cloud models
+- streaming conversation
+- local/cloud models
 - files and attachments
 - memory
-- sessions
 - tool use
-- model switching
-- long-context management
+- model switching/fallback
 
-### Coding
+### Coding Agent
 
-- repository inspection
-- search-first context selection
-- targeted edits
+- inspect/search first
+- targeted edits and patches
 - shell/test/build execution
-- test failure recovery
+- failure recovery
 - Git review
 - Safe / Balanced / Autonomous policy
-- optional commit, push always separately gated
+- optional commit; push separately gated
 
 ### Research
 
 - question decomposition
 - multi-query search
-- source opening and extraction
+- source opening/extraction
 - source ledger
-- reliability/source-type metadata
-- dates and freshness
-- contradiction detection
+- publication date/freshness
+- contradiction handling
 - primary-source preference
-- cited final reports
+- cited reports
 
-### Local knowledge / RAG
+### Document Q&A / local knowledge
 
-- PDF / Markdown / TXT / DOCX / code / JSON / CSV / HTML ingestion
+- PDF / Markdown / TXT / DOCX / code / JSON / CSV / HTML
 - incremental indexing
-- file hash based change detection
-- hybrid retrieval
-- metadata-aware ranking
-- optional reranking
+- metadata-aware retrieval
+- hybrid/vector retrieval using existing infrastructure
 - local embeddings where configured
 
-### Context management
+## Security architecture
 
-- search before read
-- file/section relevance ranking
-- bounded tool-result retention
-- unchanged-file caching by hash
-- conversation/task summaries
-- no full-repository dumping
-
-## 4. Security architecture
-
-Security is layered and deny-by-default for privileged actions.
-
-### Trust order
+Trust order:
 
 ```text
 system/security policy
     > user instruction
     > task/mode policy
     > tool policy
-    > retrieved repository/web/document/MCP content
+    > repository/web/document/MCP/tool output
 ```
 
-Repository files, README instructions, issue text, web pages, documents, command output, and MCP responses are untrusted content.
+Repository files, README instructions, issue text, webpages, documents, command output, and MCP responses are untrusted content.
 
-### Protected data
+Default-deny or approval-gate access to `.env`, private keys, cloud credentials, browser/session credentials, credential stores, API secrets, and system paths outside the selected workspace.
 
-Default-deny or approval-gate access to:
+Autonomy modes remain:
 
-- `.env`
-- SSH/private keys
-- cloud credentials
-- browser/session credentials
-- credential stores
-- API secrets
-- system directories outside the workspace
+- **Safe** — inspect/search/read; approval before edits or shell mutation.
+- **Balanced** — edit workspace files and run normal development commands; approval for sensitive/destructive/external actions.
+- **Autonomous** — independent work within configured limits; secrets, destructive operations, pushes, external side effects, and security-sensitive changes remain approval-gated.
 
-### Autonomy
+## Model execution strategy
 
-Safe:
-- inspect/search/read
-- approval before edits or shell mutation
+The existing `ModelCapability` metadata is the canonical capability source. Specialized agents need a small policy adapter that converts capability evidence into an execution strategy:
 
-Balanced:
-- edit workspace files
-- run normal development commands/tests
-- approval for destructive/sensitive/external actions
+- `native_tools` — use structured/native tool calling only when explicitly/provider-reported/verified support is sufficiently trustworthy.
+- `text_tools` — use Odysseus' fenced/text tool protocol when native tools are unavailable or uncertain.
+- `chat_only` — do not activate autonomous tool use for incompatible model families such as embeddings/image-only models.
 
-Autonomous:
-- run independently within configured limits
-- destructive operations, secrets, pushes, external side effects, and security-sensitive changes remain approval-gated
+Capability metadata grants **no authority**. Tool execution still passes through normal security and approvals.
 
-## 5. Model capability design
+## Research task design
 
-Add a lightweight capability profile around existing model endpoints. It should answer:
-
-- native tool calling supported?
-- fallback structured/text tool protocol available?
-- vision supported?
-- context-window estimate?
-- embedding model?
-- local vs remote?
-- recommended task classes: chat / code / research / summarization / embeddings
-
-This metadata must be optional and backwards compatible. Unknown capability values should degrade safely instead of blocking model use.
-
-The first implementation should consume the existing endpoint configuration and explicit `supports_tools` setting where available.
-
-## 6. Research design
-
-Research gets a persistent task state similar in spirit to coding tasks:
+Research should gain persistent state analogous to Coding Agent state:
 
 ```text
 request
@@ -216,125 +177,81 @@ limits
 status
 ```
 
-A source record should include at least:
+Each source record should track title, URL, publisher/domain, publication date when known, source type, retrieval time, originating query, relevance, reliability hint, and notes. The model may synthesize source content but must never invent citations or ledger entries.
 
-```text
-title
-url
-publisher/domain
-published_at (when known)
-source_type
-retrieved_at
-query
-relevance
-reliability_hint
-notes
-```
+## RAG / memory design
 
-The model may synthesize from source content but must never invent ledger entries or citations.
-
-## 7. RAG / memory design
-
-Keep current managers, but introduce a retrieval facade so agents do not need to know storage implementation details.
+Keep existing managers and add a common controller-facing retrieval facade if needed:
 
 ```text
 KnowledgeSearch
   search(query, scope, filters, limit)
-  ingest(path/source)
+  ingest(source)
   refresh(source)
   source_info(id)
 ```
 
-Scopes:
+Scopes: current session, selected workspace, personal documents, explicit user memory. File hashes and metadata should prevent unnecessary re-indexing.
 
-- current session
-- selected workspace/project
-- personal documents
-- explicit user memory
+## UI design
 
-File hashes and document metadata should prevent unnecessary re-indexing.
+The existing chat remains primary. Add/continue explicit mode surfaces for Chat, Research, Coding Agent, and Document Q&A. Show task, current phase, plan summary, tool activity, test/build state, research source count/citations, approvals, and final diff/source summary. Never expose private chain-of-thought.
 
-## 8. UI design
-
-The existing chat remains the primary interface.
-
-Add/continue mode surfaces for:
-
-- Chat
-- Research
-- Coding Agent
-- Document Q&A
-
-Visible agent information should include:
-
-- task
-- current phase
-- plan summary
-- tool activity
-- tests/build status
-- source count and citations for research
-- approval requests
-- final diff/source summary
-
-Never render private chain-of-thought.
-
-## 9. Implementation phases
+## Implementation phases
 
 ### Phase 1 — Architecture and capability audit
 
 - document authoritative existing systems
-- identify duplicated/parallel paths
-- define mode boundaries
-- define model capability metadata
-- define acceptance tests for each mode
+- identify already-existing capability/context/research/memory infrastructure
+- define mode boundaries and acceptance tests
+- avoid duplicate frameworks
 
-**Exit:** architecture documented; full existing test suite still green.
+**Exit:** architecture documented; regression suite green.
 
-### Phase 2 — Model capability layer
+### Phase 2 — Capability-aware agent execution
 
-- add provider-neutral capability profile
-- detect/use endpoint `supports_tools`
-- expose safe capability queries to controllers/UI
-- graceful fallback for weak local models
-- tests for local/OpenAI-compatible/unknown models
+- build a thin policy adapter over existing `ModelCapability`
+- choose native-tools vs text-tools vs chat-only safely
+- integrate it first with Coding Agent model execution
+- gracefully handle weak local models
+- add tests for tool-capable, unknown, embedding, and local/fallback cases
 
 ### Phase 3 — Coding Agent live product integration
 
 - finish deterministic activation in normal chat/workspace flow
-- make live autonomous controller execution reachable from UI
-- preserve dispatcher/security path
+- make the bounded autonomous controller reachable from the normal UI path
 - expose plan/status/tool activity
 - resume persisted tasks
+- preserve dispatcher/security authority
 
 ### Phase 4 — Research Agent upgrade
 
-- research task state
+- persistent research task state
 - source ledger
 - query planning
 - contradiction/freshness handling
-- cited final synthesis
+- cited synthesis
 - end-to-end research test
 
 ### Phase 5 — Knowledge/RAG facade
 
-- unify local document retrieval API
-- scope by user/session/workspace
-- incremental/hash-aware indexing
-- hybrid retrieval where existing infrastructure supports it
+- unify controller-facing local knowledge retrieval
+- user/session/workspace scoping
+- hash-aware incremental indexing
+- reuse current vector/embedding infrastructure
 
 ### Phase 6 — Project memory
 
 - workspace-scoped facts and conventions
-- explicit inspect/edit/delete UI/API
-- no implicit secret/repository-content persistence
+- inspect/edit/delete controls
+- no implicit secret or repository-content persistence
 
-### Phase 7 — Context manager
+### Phase 7 — Shared context policy
 
-- shared context budget
-- changed-file cache
-- tool-result deduplication
-- large-file summaries
-- source/file priority policy
+- integrate coding/research context with existing budget/compaction systems
+- changed-file/tool-result caching
+- deduplication
+- large-file/source summarization
 
 ### Phase 8 — UI mode polish
 
@@ -346,10 +263,10 @@ Never render private chain-of-thought.
 
 ### Phase 9 — Hardening
 
-- prompt-injection regression suite
-- secret/path confinement suite
-- MCP trust-boundary suite
-- destructive command coverage
+- prompt-injection regressions
+- secret/path confinement
+- MCP trust boundaries
+- destructive commands
 - cross-user/session isolation
 
 ### Phase 10 — End-to-end local assistant validation
@@ -364,19 +281,10 @@ Required flow:
 research -> plan -> inspect -> code -> test -> fix -> review -> sourced completion
 ```
 
-## 10. Acceptance requirements
+## Acceptance requirements
 
-The platform is not done when it only generates good text. It is done when:
+The platform is done only when local Ollama models participate through the same model abstraction, strong models can run bounded agent workflows, weak models degrade safely, research citations are verifiable, coding tasks cannot claim success with relevant failing tests, all privileged actions remain behind Odysseus security/approval/workspace boundaries, memory/task state is inspectable, and the full regression suite remains green.
 
-- local Ollama models can participate through the same model abstraction
-- strong tool-capable models can execute bounded autonomous tasks
-- weak models degrade gracefully instead of being given unsafe authority
-- research outputs have verifiable citations
-- coding tasks cannot claim success while relevant tests fail
-- all privileged tools still pass through Odysseus security/approval/workspace boundaries
-- users can inspect and control persisted memory/task state
-- the full Odysseus regression suite remains green
+## Immediate implementation target
 
-## 11. Immediate next implementation target
-
-Phase 2 should begin by implementing a **model capability profile** that reuses existing model endpoint records and the current model resolver. This is the prerequisite for safely deciding whether a selected local model should receive native tools, text/fenced tool fallback, or non-agent chat behavior.
+Implement the thin **capability-aware agent policy adapter** over the already-existing `src/model_capabilities.py` system, then wire it into Coding Agent model selection without changing provider configuration or tool authority.
