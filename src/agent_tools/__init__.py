@@ -3,12 +3,6 @@ agent_tools.py — Facade module.
 
 Re-exports tool parsing, schemas, execution, and implementations
 for backward compatibility. All importers continue to work unchanged.
-
-Sub-modules:
-  - tool_parsing.py: regex patterns, parse/strip functions
-  - tool_schemas.py: FUNCTION_TOOL_SCHEMAS, function_call_to_tool_block
-  - tool_execution.py: execute_tool_block, format_tool_result, MCP helpers
-  - tool_implementations.py: all do_* tool functions
 """
 
 import logging
@@ -22,7 +16,7 @@ logger = logging.getLogger(__name__)
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, ApplyPatchTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
-from .coding_tools import TodoWriteTool
+from .coding_tools import TodoWriteTool, CodingTaskTool, CodingInspectTool, CodingGitTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .interaction_tools import AskUserTool, UpdatePlanTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
@@ -44,6 +38,9 @@ TOOL_HANDLERS = {
     "edit_file": EditFileTool().execute,
     "apply_patch": ApplyPatchTool().execute,
     "todowrite": TodoWriteTool().execute,
+    "coding_task": CodingTaskTool().execute,
+    "coding_inspect": CodingInspectTool().execute,
+    "coding_git": CodingGitTool().execute,
     "ls": LsTool().execute,
     "glob": GlobTool().execute,
     "grep": GrepTool().execute,
@@ -64,95 +61,57 @@ TOOL_HANDLERS = {
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
 }
-# Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
 
-# ---------------------------------------------------------------------------
-# Constants (re-exported for backward compatibility — single source of truth
-# is src.constants; always prefer importing from there for new code)
-# ---------------------------------------------------------------------------
 MAX_AGENT_ROUNDS = 50
 SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
 
-# Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-             "apply_patch", "todowrite",
+             "apply_patch", "todowrite", "coding_task", "coding_inspect", "coding_git",
              "grep", "glob", "ls", "get_workspace", "manage_bg_jobs",
-             "create_document", "update_document", "edit_document",
-             "search_chats",
-             "chat_with_model", "create_session", "list_sessions",
-             "send_to_session",
-             "pipeline",
-             "manage_session", "manage_memory", "list_models",
-             "ui_control", "generate_image", "ask_user", "update_plan",
-             "manage_tasks", "api_call", "ask_teacher", "manage_skills",
-             "suggest_document",
-             "manage_endpoints", "manage_mcp", "manage_webhooks",
-             "manage_tokens", "manage_documents", "manage_settings",
-             "manage_notes", "manage_calendar",
-             "resolve_contact", "manage_contact",
-             # Email tool names come from BUILTIN_EMAIL_TOOLS (unioned below)
-             # so the fence regex, dispatch, and non-admin blocklist all cover
-             # the same set.
-             # Cookbook tools (LLM serving + downloads). Without these
-             # entries, native function calls to e.g. list_served_models
-             # are rejected as "Unknown function call" before reaching
-             # the dispatcher — silent failure for the whole cookbook
-             # surface.
-             "download_model", "serve_model",
-             "list_served_models", "stop_served_model",
-             "list_downloads", "cancel_download",
-             "search_hf_models", "list_cached_models",
-             "list_serve_presets", "serve_preset", "adopt_served_model",
-             "list_cookbook_servers",
-             # Other tools the agent reaches for that were also missing.
-             "edit_image", "trigger_research", "manage_research",
-             # Generic loopback to any UI-button endpoint (cookbook,
-             # gallery, email folders, etc.) — agent uses this when
-             # there's no named tool wrapper for the action.
+             "create_document", "update_document", "edit_document", "search_chats",
+             "chat_with_model", "create_session", "list_sessions", "send_to_session",
+             "pipeline", "manage_session", "manage_memory", "list_models", "ui_control",
+             "generate_image", "ask_user", "update_plan", "manage_tasks", "api_call",
+             "ask_teacher", "manage_skills", "suggest_document", "manage_endpoints",
+             "manage_mcp", "manage_webhooks", "manage_tokens", "manage_documents",
+             "manage_settings", "manage_notes", "manage_calendar", "resolve_contact",
+             "manage_contact", "download_model", "serve_model", "list_served_models",
+             "stop_served_model", "list_downloads", "cancel_download", "search_hf_models",
+             "list_cached_models", "list_serve_presets", "serve_preset", "adopt_served_model",
+             "list_cookbook_servers", "edit_image", "trigger_research", "manage_research",
              "app_api"} | BUILTIN_EMAIL_TOOLS
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 
-# ---------------------------------------------------------------------------
-# Re-exports from sub-modules
-# ---------------------------------------------------------------------------
-
-# Parsing
-from src.tool_parsing import (  # noqa: E402, F401
-    parse_tool_blocks,
-    strip_tool_blocks,
-    _TOOL_NAME_MAP,
-    _TOOL_BLOCK_RE,
-    _TOOL_CALL_RE,
-    _XML_TOOL_CALL_RE,
-    _XML_INVOKE_RE,
-    _XML_PARAM_RE,
+from src.tool_parsing import (
+    parse_tool_blocks, strip_tool_blocks, _TOOL_NAME_MAP, _TOOL_BLOCK_RE,
+    _TOOL_CALL_RE, _XML_TOOL_CALL_RE, _XML_INVOKE_RE, _XML_PARAM_RE,
 )
+from src.tool_schemas import FUNCTION_TOOL_SCHEMAS, function_call_to_tool_block
+from src.tool_execution import execute_tool_block, format_tool_result
+from .document_tools import set_active_document, set_active_model
+from src.tool_implementations import do_search_chats, do_manage_skills, do_manage_tasks, do_api_call
 
-# Schemas
-from src.tool_schemas import (  # noqa: E402, F401
-    FUNCTION_TOOL_SCHEMAS,
-    function_call_to_tool_block,
-)
+FUNCTION_TOOL_SCHEMAS.extend([
+    {"type": "function", "function": {"name": "coding_task", "description": "Initialize or load a bounded autonomous coding task in the active workspace. Use this at the start of a substantial repository coding request.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["start", "load", "status"]}, "task_id": {"type": "string"}, "request": {"type": "string"}, "workspace": {"type": "string"}, "autonomy": {"type": "string", "enum": ["safe", "balanced", "autonomous"]}, "auto_commit": {"type": "boolean"}, "auto_push": {"type": "boolean"}, "max_iterations": {"type": "integer"}, "max_tool_calls": {"type": "integer"}, "max_shell_commands": {"type": "integer"}, "max_execution_seconds": {"type": "integer"}, "max_test_retries": {"type": "integer"}}, "required": ["action"]}}},
+    {"type": "function", "function": {"name": "coding_inspect", "description": "Inspect the active repository without dumping source contents. Returns bounded repository metadata, likely relevant files, and detected test commands.", "parameters": {"type": "object", "properties": {"workspace": {"type": "string"}, "limit": {"type": "integer"}}, "required": []}}},
+    {"type": "function", "function": {"name": "coding_git", "description": "Read-only Git inspection for a coding task. Supports status, diff, log, and branches. Never modifies or pushes the repository.", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["status", "diff", "log", "branches"]}, "workspace": {"type": "string"}, "staged": {"type": "boolean"}, "limit": {"type": "integer"}}, "required": ["action"]}}},
+])
 
-# Execution
-from src.tool_execution import (  # noqa: E402, F401
-    execute_tool_block,
-    format_tool_result,
-)
+# Layer the Coding Agent around the normal dispatcher. Runtime accounting stays
+# innermost; autonomy can reject an action before it executes; progress remains
+# outermost so waiting-approval events are surfaced through the existing UI.
+from src.coding_agent.runtime import install_runtime_hooks  # noqa: E402
+install_runtime_hooks(TOOL_HANDLERS)
+from src.coding_agent.autonomy import install_autonomy_hooks  # noqa: E402
+install_autonomy_hooks(TOOL_HANDLERS)
+from src.coding_agent.progress import install_progress_hooks  # noqa: E402
+install_progress_hooks(TOOL_HANDLERS)
 
-# Document functions
-from .document_tools import (
-    set_active_document, 
-    set_active_model
-)
-
-# Implementations
-from src.tool_implementations import (  # noqa: E402, F401
-    do_search_chats,
-    do_manage_skills,
-    do_manage_tasks,
-    do_api_call,
-)
+# The existing workspace chat flow already starts multi-step coding work with
+# todowrite. Bridge that boundary into persistent Coding Agent state without
+# introducing a parallel route or bypassing any existing tool/security layer.
+from src.coding_agent.chat_bridge import install_chat_bridge  # noqa: E402
+install_chat_bridge(TOOL_HANDLERS)
